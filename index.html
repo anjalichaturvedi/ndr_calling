@@ -79,7 +79,9 @@ details summary{cursor:pointer;font-weight:700}
 </header>
 
 <div class="panel status" id="status"><span class="dot"></span><span>Loading Google Sheets…</span></div>
-
+<div class="panel" id="matchDiagnostics" style="padding:14px 16px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+  AWB matching: <b>V3 exact full-string match</b> · ClickPost AWB ↔ Exotel CustomField AWB · trim outer whitespace only
+</div>
 
 <details class="panel filters" open>
   <summary>Filters</summary>
@@ -181,7 +183,7 @@ details summary{cursor:pointer;font-weight:700}
       <label>Merged Data Google Sheet</label>
       <input id="mergedUrl" value="https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing">
       <div class="source-help">
-        Dashboard source: <b>Merged_Data</b> tab only. The AWB merge is already done in Google Sheets.
+        Dashboard source: <b>Merged_Data</b> tab only. The dashboard validates the returned tab and requires an <b>AWB</b> header.
       </div>
     </div>
     <button class="btn primary" id="refreshBtnBottom">Refresh live data</button>
@@ -282,27 +284,38 @@ async function loadMergedDataSheet(raw){
   const sheetName="Merged_Data";
   const encodedSheet=encodeURIComponent(sheetName);
 
-  // Published/exported CSV for a named tab. This avoids requiring the gid.
-  const urls=[
-    `https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv&sheet=${encodedSheet}`,
-    `https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`
-  ];
+  // IMPORTANT:
+  // The /export?format=csv endpoint may ignore `sheet=` and return the
+  // spreadsheet's first/default tab. Do not trust it blindly.
+  // First try the named tab through gviz, then validate that AWB exists.
+  const gvizCsvUrl=
+    `https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?sheet=${encodedSheet}&tqx=out:csv`;
 
-  let lastError=null;
-  for(const url of urls){
-    try{
-      const response=await fetch(url,{cache:"no-store"});
-      if(!response.ok) throw new Error(`Sheet request failed (${response.status}).`);
+  try{
+    const response=await fetch(gvizCsvUrl,{cache:"no-store"});
+    if(response.ok){
       const text=await response.text();
       const parsed=parseCSVText(text);
-      if(parsed.cols.length && parsed.rows.length) return parsed;
-    }catch(e){
-      lastError=e;
+      const hasAwb=parsed.cols.some(c=>String(c).trim().toLowerCase()==="awb");
+      if(hasAwb && parsed.rows.length){
+        return parsed;
+      }
     }
+  }catch(e){
+    console.warn("Named-tab CSV read failed:",e);
   }
 
-  // Fallback: if the named-tab export is blocked, use gviz JSONP with sheet=
-  return await googleVizMergedData(raw);
+  // JSONP fallback. This also avoids browser CORS issues in Vercel.
+  const parsed=await googleVizMergedData(raw);
+  const hasAwb=parsed.cols.some(c=>String(c).trim().toLowerCase()==="awb");
+
+  if(!hasAwb){
+    throw new Error(
+      `Merged_Data tab was not loaded. Expected an "AWB" column, but received: ${parsed.cols.join(" | ")}`
+    );
+  }
+
+  return parsed;
 }
 
 function googleVizMergedData(raw){
@@ -348,7 +361,7 @@ function googleVizMergedData(raw){
     };
 
     script.onerror=()=>fail(new Error("Could not load Merged_Data from Google Sheets."));
-    script.src=`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?sheet=Merged_Data&tqx=responseHandler:${cb}`;
+    script.src=`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?sheet=${encodeURIComponent("Merged_Data")}&tqx=responseHandler:${cb}`;
     document.head.appendChild(script);
   });
 }
@@ -492,7 +505,16 @@ function isoDate(d){return d&&!isNaN(d)?d.toISOString().slice(0,10):""}
 function fmtDate(d){return d&&!isNaN(d)?d.toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}
 function num(v){const n=parseFloat(String(v??"").replace(/[^0-9.-]/g,""));return isNaN(n)?0:n}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
-function rowsToObjects(sheet){return sheet.rows.map(r=>Object.fromEntries(sheet.cols.map((c,i)=>[c,r[i]??""])))}
+function rowsToObjects(sheet){
+  const seen={};
+  const cols=sheet.cols.map((c,i)=>{
+    let name=String(c??"").trim() || `Column ${i+1}`;
+    if(seen[name]){ seen[name]++; name=`${name}_${seen[name]}`; }
+    else seen[name]=1;
+    return name;
+  });
+  return sheet.rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c,r[i]??""])));
+}
 
 function classify(shipment,firstCall){
   const status=normalize(shipment.status);
@@ -575,7 +597,9 @@ async function loadData(){
     const ofdCol=col(["Latest OFD Timestamp"]);
 
     if(!awbCol){
-      throw new Error("Merged_Data does not contain an AWB column.");
+      throw new Error(
+        `Merged_Data tab does not contain an AWB column. Loaded columns: ${sheet.cols.join(" | ")}`
+      );
     }
 
     // This dashboard expects the merge to already be completed in Google Sheets.
