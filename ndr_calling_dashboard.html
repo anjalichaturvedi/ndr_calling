@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NDR Calling Intelligence Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#f5f7fb;--panel:#fff;--text:#111827;--muted:#667085;--line:#e5e7eb;
+  --blue:#2563eb;--green:#16a34a;--red:#dc2626;--amber:#d97706;--purple:#7c3aed;
+  --cyan:#0891b2;--slate:#64748b;--shadow:0 8px 28px rgba(15,23,42,.06);--radius:16px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,input,select{font:inherit}
+.app{max-width:1650px;margin:auto;padding:24px}
+header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}
+h1{margin:0;font-size:28px;letter-spacing:-.5px}
+.subtitle{color:var(--muted);margin-top:5px;max-width:850px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 13px;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.status{padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--amber);flex:0 0 auto}
+.dot.ok{background:var(--green)} .dot.err{background:var(--red)}
+.filters{padding:16px;margin-bottom:14px}
+.filter-grid{display:grid;grid-template-columns:repeat(7,minmax(120px,1fr));gap:10px;margin-top:12px}
+label{display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+select,input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--text);outline:none}
+.source-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.filter-note{margin-top:10px;color:var(--muted);font-size:12px}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{padding:15px;cursor:pointer;transition:.15s;border:1px solid var(--line)}
+.kpi:hover,.kpi.active{border-color:#93c5fd;box-shadow:0 0 0 2px rgba(37,99,235,.08)}
+.kpi .label{font-size:11px;color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.04em}
+.kpi .value{font-size:25px;font-weight:800;letter-spacing:-.4px}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;margin-bottom:16px}
+.card{padding:16px;min-width:0}
+.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-12{grid-column:span 12}
+.card h2{font-size:15px;margin:0 0 3px}.info{display:inline-flex;position:relative;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #98a2b3;border-radius:50%;font-size:10px;font-weight:800;color:#667085;cursor:help;vertical-align:1px;margin-left:5px;background:#fff;line-height:1}.info::after{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 9px);transform:translateX(-50%) translateY(4px);width:245px;padding:9px 10px;border-radius:9px;background:#111827;color:#fff;font-size:11px;font-weight:500;line-height:1.4;text-align:left;white-space:normal;box-shadow:0 8px 22px rgba(15,23,42,.18);opacity:0;visibility:hidden;pointer-events:none;z-index:1000;transition:opacity .12s ease,transform .12s ease}.info::before{content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%) translateY(4px);border:5px solid transparent;border-top-color:#111827;opacity:0;visibility:hidden;z-index:1001;transition:opacity .12s ease,transform .12s ease}.info:hover::after,.info:hover::before,.info:focus-visible::after,.info:focus-visible::before{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0)}.info:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}.card .desc{font-size:12px;color:var(--muted);margin-bottom:12px}
+.chart-wrap{height:285px;position:relative}.chart-wrap.tall{height:340px}
+.mini-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+.mini{padding:12px;border:1px solid var(--line);border-radius:12px;background:#fafbfc}
+.mini .v{font-size:20px;font-weight:800}.mini .l{font-size:11px;color:var(--muted);margin-top:2px}
+.table-panel{overflow:hidden}
+.table-head{padding:16px;display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid var(--line)}
+.table-head h2{margin:0;font-size:15px}.table-head small{color:var(--muted)}
+.table-scroll{overflow:auto;max-height:620px}
+table{width:100%;border-collapse:collapse;min-width:1250px}
+th,td{padding:10px 12px;border-bottom:1px solid #eef0f4;text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:#fafbfc;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em;z-index:2}
+td{font-size:12px}
+.badge{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:11px;font-weight:700}
+.badge.green{background:#dcfce7;color:#166534}.badge.red{background:#fee2e2;color:#991b1b}
+.badge.amber{background:#fef3c7;color:#92400e}.badge.blue{background:#dbeafe;color:#1e40af}
+.badge.gray{background:#f3f4f6;color:#4b5563}.badge.purple{background:#ede9fe;color:#5b21b6}
+.empty{padding:35px;text-align:center;color:var(--muted)}
+.footer{padding:14px 0 30px;color:var(--muted);font-size:11px}
+.source-help{font-size:11px;color:var(--muted);margin-top:8px}
+details summary{cursor:pointer;font-weight:700}
+@media(max-width:1200px){.kpis{grid-template-columns:repeat(3,1fr)}.filter-grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:850px){.source-grid{grid-template-columns:1fr}.span-3,.span-4,.span-5,.span-6,.span-7,.span-8{grid-column:span 12}.mini-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:650px){.app{padding:14px}header{display:block}.actions{margin-top:12px}.kpis{grid-template-columns:repeat(2,1fr)}.filter-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <div>
+    <h1>NDR Calling Dashboard</h1>
+  </div>
+  <div class="actions">
+    <button class="btn primary" id="refreshBtn">Refresh data</button>
+    <button class="btn" id="resetBtn">Reset filters</button>
+  </div>
+</header>
+
+<div class="panel status" id="status"><span class="dot"></span><span>Loading Google Sheets…</span></div>
+
+<details class="panel filters" open>
+  <summary>Filters</summary>
+  <div class="filter-grid">
+    <div><label>Shipment outcome</label><select id="fOutcome"><option value="">All</option></select></div>
+    <div><label>Last outbound call status</label><select id="fCallStatus"><option value="">All</option></select></div>
+    <div><label>Payment mode</label><select id="fPayment"><option value="">All</option></select></div>
+    <div><label>Calls per AWB</label><select id="fCalls"><option value="">All</option><option value="1">1 call</option><option value="2">2 calls</option><option value="3">3 calls</option><option value="4+">4+ calls</option></select></div>
+    <div><label>First call from</label><input id="fFrom" type="date"></div>
+    <div><label>First call to</label><input id="fTo" type="date"></div>
+    <div><label>AWB search</label><input id="search" placeholder="Search AWB…"></div>
+  </div>
+  <div class="filter-note">Click any KPI or chart segment to filter the AWB report. Click it again after resetting to return to the full called-AWB population.</div>
+</details>
+
+<section class="kpis" id="kpis"></section>
+
+<div class="grid">
+  <section class="panel card span-4">
+    <h2>Calling performance <span class="info" data-tooltip="Outbound call records only. Completed/failed/no-answer are call statuses. Calls per AWB = outbound calls ÷ unique called AWBs." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="mini-grid" id="callMini"></div>
+    <div class="chart-wrap"><canvas id="callHealthChart"></canvas></div>
+  </section>
+
+  <section class="panel card span-8">
+    <h2>Called AWB outcome <span class="info" data-tooltip="Only called AWBs are included. Delivery/RTO are based on the latest ClickPost status, not event timestamps." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">Only called AWBs. Shipment outcome uses the latest ClickPost status.</div>
+    <div class="chart-wrap"><canvas id="outcomeChart"></canvas></div>
+  </section>
+
+  <section class="panel card span-7">
+    <h2>What happened to the called AWBs? <span class="info" data-tooltip="Each called AWB is classified using its latest ClickPost status." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">Delivered and RTO are based on the latest ClickPost status for the called AWB population.</div>
+    <div class="chart-wrap"><canvas id="outcomeBar"></canvas></div>
+  </section>
+
+  <section class="panel card span-5">
+    <h2>Delivery conversion after calling <span class="info" data-tooltip="Latest ClickPost status = Delivered ÷ called AWBs × 100." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">Delivered latest status ÷ all called AWBs. This is the delivery rate of the called NDR population.</div>
+    <div class="chart-wrap"><canvas id="deliveryChart"></canvas></div>
+  </section>
+
+  <section class="panel card span-7">
+    <h2>Call status → shipment outcome <span class="info" data-tooltip="Called AWBs are grouped by last outbound call status and latest ClickPost status." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">AWB-level latest ClickPost status grouped by the last outbound call status.</div>
+    <div class="chart-wrap"><canvas id="statusOutcomeChart"></canvas></div>
+  </section>
+
+  <section class="panel card span-5">
+    <h2>Calls per AWB <span class="info" data-tooltip="Outbound call records grouped by unique AWB. Buckets are mutually exclusive." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">Shows whether AWBs are being called once or repeatedly.</div>
+    <div class="chart-wrap"><canvas id="frequencyChart"></canvas></div>
+  </section>
+
+  <section class="panel card span-7">
+    <h2>Outbound calls over time <span class="info" data-tooltip="Count of outbound call records by the date of the first outbound call for the AWB." tabindex="0" aria-label="More information">i</span></h2>
+    <div class="desc">Daily outbound call volume. Click a day to filter to AWBs whose first call was on that date.</div>
+    <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
+  </section>
+<section class="panel table-panel span-12">
+    <div class="table-head">
+      <div><h2>AWB-level calling report <span class="info" data-tooltip="One row per unique AWB that had at least one outbound call. Clickable dashboard metrics filter this table." tabindex="0" aria-label="More information">i</span></h2><small id="tableMeta"></small></div>
+      <input id="tableSearch" placeholder="Search AWB in table…" style="max-width:260px">
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>AWB</th><th>First call</th><th>Last call</th><th>Calls</th><th>Completed</th><th>Failed</th><th>No answer</th>
+          <th>Missed</th><th>Last call status</th><th>Payment</th><th>Outcome</th><th>Outcome date</th>
+          <th>Current shipment status</th><th>Call cost</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="empty" class="empty" style="display:none">No AWBs match the current filters.</div>
+    </div>
+  </section>
+</div>
+
+<div class="panel" style="padding:16px;margin-bottom:16px">
+  <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+    <div>
+      <label>Exotel / NDR Calling Google Sheet</label>
+      <input id="exoUrl" value="https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing">
+    </div>
+    <div>
+      <label>ClickPost Google Sheet</label>
+      <input id="cpUrl" value="https://docs.google.com/spreadsheets/d/1XyoDQmsAvGCESvy-sOxelQ6uoSGCBPEOodmXcoi2k4o/edit?usp=sharing">
+    </div>
+    <button class="btn primary" id="refreshBtnBottom">Refresh live data</button>
+  </div>
+  <div class="source-help">Paste or replace either Google Sheet link and click <b>Refresh live data</b>. The selected tab is read by its gid; if no gid is present, gid=0 is used.</div>
+</div>
+
+<div class="footer">
+  Logic: only AWBs with ≥1 outbound NDR call are included. Delivery and RTO are calculated from the LATEST ClickPost status for those called AWBs. No shipment metrics are calculated for uncalled AWBs.
+</div>
+</div>
+
+<script>
+const DEFAULTS={
+  exotel:"https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing",
+  clickpost:"https://docs.google.com/spreadsheets/d/1XyoDQmsAvGCESvy-sOxelQ6uoSGCBPEOodmXcoi2k4o/edit?usp=sharing"
+};
+const state={all:[],filtered:[],charts:{},filters:{},search:"",tableSearch:"",loading:false};
+
+function setStatus(msg,type="loading"){
+  const el=document.getElementById("status");
+  el.innerHTML=`<span class="dot ${type==="ok"?"ok":type==="err"?"err":""}"></span><span>${msg}</span>`;
+}
+function sheetId(url){const m=(url||"").match(/\/spreadsheets\/d\/([A-Za-z0-9-_]+)/);return m?m[1]:null}
+function sheetGid(url){const m=(url||"").match(/[?&#]gid=([0-9]+)/);return m?m[1]:"0"}
+
+function googleVizJsonp(raw){
+  return new Promise((resolve,reject)=>{
+    const m=String(raw||"").match(/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+    if(!m) return reject(new Error("Invalid Google Sheets URL."));
+
+    const g=String(raw||"").match(/[?#&]gid=(\d+)/);
+    const gid=g?g[1]:"0";
+    const cb="ndr_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
+    const script=document.createElement("script");
+    let done=false;
+
+    const cleanup=()=>{
+      clearTimeout(timer);
+      try{delete window[cb]}catch(_){}
+      script.remove();
+    };
+    const fail=(err)=>{
+      if(done)return;
+      done=true;
+      cleanup();
+      reject(err);
+    };
+
+    const timer=setTimeout(
+      ()=>fail(new Error("Google Sheets did not respond within 20 seconds. The dashboard will keep using cached data if available.")),
+      20000
+    );
+
+    window[cb]=(resp)=>{
+      if(done)return;
+      try{
+        if(!resp || resp.status!=="ok"){
+          throw new Error(resp?.errors?.[0]?.detailed_message || "Google Sheets returned an error.");
+        }
+
+        const cols=(resp.table?.cols||[]).map((c,i)=>c.label||`Column ${i+1}`);
+        const rows=(resp.table?.rows||[]).map(row=>
+          cols.map((_,i)=>{
+            const cell=(row.c||[])[i];
+            return cell ? (cell.f ?? cell.v ?? "") : "";
+          })
+        );
+
+        done=true;
+        cleanup();
+        resolve({cols,rows});
+      }catch(err){
+        fail(err);
+      }
+    };
+
+    script.onerror=()=>fail(new Error("Could not connect to Google Sheets. Check that both sheets are shared with link access."));
+
+    // Keep the fast loading method used by this dashboard:
+    // one lightweight Google Visualization JSONP request per source,
+    // both requests started at the same time.
+    script.src=`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?gid=${gid}&tqx=responseHandler:${cb}`;
+    document.head.appendChild(script);
+  });
+}
+
+function normalize(v){return String(v??"").trim()}
+function lower(v){return normalize(v).toLowerCase()}
+function parseDate(v){
+  if(!v)return null;
+  const s=normalize(v);
+  const g=s.match(/^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?\)$/);
+  if(g)return new Date(+g[1],+g[2],+g[3],+(g[4]||0),+(g[5]||0),+(g[6]||0));
+  const d=new Date(s);
+  return isNaN(d)?null:d;
+}
+function isoDate(d){return d&&!isNaN(d)?d.toISOString().slice(0,10):""}
+function fmtDate(d){return d&&!isNaN(d)?d.toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}
+function num(v){const n=parseFloat(String(v??"").replace(/[^0-9.-]/g,""));return isNaN(n)?0:n}
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function rowsToObjects(sheet){return sheet.rows.map(r=>Object.fromEntries(sheet.cols.map((c,i)=>[c,r[i]??""])))}
+
+function parseAWB(v){
+  const s=normalize(v);
+  let m=s.match(/awb_number\s*=\s*([^\s;"']+)/i);
+  if(m)return m[1].trim();
+  m=s.match(/awb(?:number)?\s*[:=]\s*([A-Za-z0-9_-]+)/i);
+  if(m)return m[1].trim();
+  return "";
+}
+
+function classify(shipment,firstCall){
+  // Calling conversion is based on the CURRENT/LATEST ClickPost status.
+  // The denominator is the called-AWB population only.
+  // A called AWB is "Delivered" when ClickPost's latest status is Delivered.
+  // We do not use OFD/RTO timestamps or a generic "post-call shipment event"
+  // because every shipment has a latest status and that is the requested source of truth.
+  const status=normalize(shipment.status).toLowerCase();
+
+  if(status.includes("rto")){
+    return {key:"rto",label:"RTO",date:null};
+  }
+  if(status==="delivered" || status.includes("delivered")){
+    return {key:"delivered",label:"Delivered",date:null};
+  }
+  if(status){
+    return {key:"other",label:shipment.status,date:null};
+  }
+  return {key:"unknown",label:"Status unavailable",date:null};
+}
+
+const CACHE_KEY="ndr_calling_dashboard_cache_v4";
+
+function saveCache(payload){
+  try{
+    localStorage.setItem(CACHE_KEY,JSON.stringify({
+      savedAt:Date.now(),
+      rows:payload.rows,
+      meta:payload.meta
+    }));
+  }catch(e){}
+}
+
+function readCache(){
+  try{
+    const x=JSON.parse(localStorage.getItem(CACHE_KEY)||"null");
+    if(!x||!Array.isArray(x.rows))return null;
+    x.rows.forEach(r=>{
+      ["firstCall","lastCall","outcomeDate"].forEach(k=>{
+        if(r[k]) r[k]=parseDate(r[k]);
+      });
+    });
+    return x;
+  }catch(e){return null}
+}
+
+function setRows(rows,meta){
+  state.all=rows;
+  populateFilters();
+  applyFilters(true);
+  return rows.length;
+}
+
+async function loadData(){
+  if(state.loading)return;
+  state.loading=true;
+  setStatus("Connecting to the 2 linked Google Sheets…");
+  const cached=readCache();
+
+  // Paint the last successful result immediately. Live refresh then happens
+  // in the background, so the dashboard never sits on a blank screen.
+  if(cached){
+    setRows(cached.rows,cached.meta);
+    setStatus(`Showing cached data from ${new Date(cached.savedAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})} · refreshing live data…`);
+  }else{
+    setStatus("Loading live Google Sheets data…");
+  }
+
+  try{
+    // User-provided order: Exotel = calling, ClickPost = shipment.
+    // Query only the fields used by this dashboard. If a sheet has unusual
+    // headers, fall back to the full-sheet request automatically.
+    const callingUrl=document.getElementById("exoUrl").value;
+    const shipmentUrl=document.getElementById("cpUrl").value;
+
+    // Do not query the sheets twice or run header-specific queries.
+    // The source dashboard's fast path is two parallel Google Visualization
+    // JSONP requests, one for each already-linked sheet.
+    const [callingSheet,shipmentSheet]=await Promise.all([
+      googleVizJsonp(callingUrl),
+      googleVizJsonp(shipmentUrl)
+    ]);
+
+    const calling=rowsToObjects(callingSheet);
+    const shipment=rowsToObjects(shipmentSheet);
+
+    const shipments=new Map();
+    for(const r of shipment){
+      const awb=normalize(r["AWB"]||r["awb"]);
+      if(!awb)continue;
+      shipments.set(awb,{
+        payment:normalize(r["Payment Mode"]),
+        status:normalize(r["Latest Status"])
+      });
+    }
+
+    const agg=new Map();
+    let outboundRecords=0;
+    for(const r of calling){
+      const direction=lower(r["Direction"]);
+      const awb=parseAWB(r["CustomField"]);
+      const outbound=direction.includes("outbound");
+
+      if(outbound)outboundRecords++;
+      if(!awb)continue;
+
+      if(!agg.has(awb))agg.set(awb,{awb,calls:[]});
+      const a=agg.get(awb);
+
+      if(outbound){
+        a.calls.push({
+          start:parseDate(r["StartTime"]),
+          status:lower(r["Status"]),
+          duration:num(r["Duration"]),
+          conversation:num(r["ConversationDuration"]),
+          price:num(r["Price"])
+        });
+      }
+    }
+
+    const rows=[];
+    for(const a of agg.values()){
+      if(!a.calls.length)continue;
+      a.calls.sort((x,y)=>(x.start?.getTime()||0)-(y.start?.getTime()||0));
+      const first=a.calls.find(c=>c.start)?.start;
+      if(!first)continue;
+      const last=a.calls[a.calls.length-1];
+      const s=shipments.get(a.awb);
+      const counts={
+        completed:a.calls.filter(c=>c.status==="completed").length,
+        failed:a.calls.filter(c=>c.status==="failed").length,
+        noanswer:a.calls.filter(c=>c.status==="no-answer").length,
+        missed:a.calls.filter(c=>c.status==="missed-call").length
+      };
+      const outcome=s?classify(s,first):{key:"no_match",label:"No ClickPost match",date:null};
+      rows.push({
+        awb:a.awb,firstCall:first,lastCall:last.start,callCount:a.calls.length,
+        ...counts,lastStatus:last.status,
+        payment:s?.payment||"Unknown",outcomeKey:outcome.key,outcome:outcome.label,
+        outcomeDate:outcome.date,currentStatus:s?.status||"No ClickPost match",
+totalCost:a.calls.reduce((x,c)=>x+c.price,0),
+        avgDuration:a.calls.reduce((x,c)=>x+c.duration,0)/a.calls.length,
+        avgConversation:a.calls.reduce((x,c)=>x+c.conversation,0)/a.calls.length,
+        shipmentFound:!!s
+      });
+    }
+
+    setRows(rows,{outboundRecords,shipmentRows:shipment.length});
+    saveCache({
+      rows,
+      meta:{outboundRecords,shipmentRows:shipment.length}
+    });
+  }catch(e){
+    console.error(e);
+    setStatus((e.message||"Could not load the Google Sheets.")+" Click Refresh live data to try again.","err");
+  }finally{
+    state.loading=false;
+  }
+}
+
+function populateSelect(id,values){
+  const el=document.getElementById(id),old=el.value;
+  el.innerHTML='<option value="">All</option>'+[...new Set(values.filter(Boolean))].sort().map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  if([...el.options].some(o=>o.value===old))el.value=old;
+}
+function populateFilters(){
+  populateSelect("fOutcome",state.all.map(r=>r.outcome));
+  populateSelect("fCallStatus",state.all.map(r=>r.lastStatus));
+  populateSelect("fPayment",state.all.map(r=>r.payment));
+}
+function applyFilters(rerender=true){
+  state.filters={
+    outcome:document.getElementById("fOutcome").value,
+    callStatus:document.getElementById("fCallStatus").value,
+    payment:document.getElementById("fPayment").value,
+    calls:document.getElementById("fCalls").value,
+    from:document.getElementById("fFrom").value,
+    to:document.getElementById("fTo").value
+  };
+  state.search=lower(document.getElementById("search").value);
+  state.tableSearch=lower(document.getElementById("tableSearch").value);
+  state.filtered=state.all.filter(r=>{
+    if(state.filters.outcome&&r.outcome!==state.filters.outcome)return false;
+    if(state.filters.callStatus&&r.lastStatus!==state.filters.callStatus)return false;
+    if(state.filters.payment&&r.payment!==state.filters.payment)return false;
+    if(state.filters.calls){
+      if(state.filters.calls==="4+" ? r.callCount<4 : r.callCount!==Number(state.filters.calls))return false;
+    }
+    const d=isoDate(r.firstCall);
+    if(state.filters.from&&d<state.filters.from)return false;
+    if(state.filters.to&&d>state.filters.to)return false;
+    if(state.search&&!lower(r.awb).includes(state.search))return false;
+    if(state.tableSearch&&!lower(r.awb).includes(state.tableSearch))return false;
+    return true;
+  });
+  if(rerender)render();
+}
+function resetFilters(){
+  ["fOutcome","fCallStatus","fPayment","fCalls","fFrom","fTo","search","tableSearch"].forEach(id=>document.getElementById(id).value="");
+  applyFilters();
+}
+function filterOutcome(v){document.getElementById("fOutcome").value=v;applyFilters()}
+function filterCallStatus(v){document.getElementById("fCallStatus").value=v;applyFilters()}
+function filterCalls(v){document.getElementById("fCalls").value=v;applyFilters()}
+
+function destroyCharts(){Object.values(state.charts).forEach(c=>c?.destroy());state.charts={}}
+const colors={blue:"#2563eb",green:"#16a34a",red:"#dc2626",amber:"#d97706",purple:"#7c3aed",cyan:"#0891b2",slate:"#64748b",gray:"#cbd5e1"};
+function makeChart(id,type,data,options={}){state.charts[id]=new Chart(document.getElementById(id),{type,data,options})}
+function pct(n,d){return d?((n/d)*100).toFixed(1)+"%":"0.0%"}
+function avg(arr){return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0}
+function money(n){return "₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}
+
+function render(){
+  const rows=state.filtered;
+  const called=rows.length;
+  const totalCalls=rows.reduce((s,r)=>s+r.callCount,0);
+  const completed=rows.reduce((s,r)=>s+r.completed,0);
+  const failed=rows.reduce((s,r)=>s+r.failed,0);
+  const noanswer=rows.reduce((s,r)=>s+r.noanswer,0);
+  const missed=rows.reduce((s,r)=>s+r.missed,0);
+  const cost=rows.reduce((s,r)=>s+r.totalCost,0);
+
+  // Delivery conversion:
+  // denominator = every AWB that had at least one outbound NDR call.
+  // numerator = those called AWBs whose LATEST ClickPost status is Delivered.
+  // This deliberately does not use post-call events, OFD timestamps, or delivery timestamps.
+  const delivered=rows.filter(r=>r.outcomeKey==="delivered").length;
+  const rto=rows.filter(r=>r.outcomeKey==="rto").length;
+  const otherStatus=rows.filter(r=>r.outcomeKey==="other").length;
+  const unknownStatus=rows.filter(r=>r.outcomeKey==="unknown").length;
+  const deliveredPct=pct(delivered,called);
+  const rtoPct=pct(rto,called);
+  const otherPct=pct(otherStatus,called);
+
+  const kpis=[
+    ["Unique AWBs called",called,"AWBs with ≥1 outbound NDR call","all",
+      "Count of distinct AWBs that received at least one outbound call."],
+    ["Outbound calls",totalCalls,called?`${(totalCalls/called).toFixed(2)} calls / AWB`:"0.00 calls / AWB","all",
+      "Total outbound call records. Calls per AWB = outbound calls ÷ called AWBs."],
+    ["AWBs per call",totalCalls?(called/totalCalls).toFixed(2):"0.00","Unique called AWBs ÷ outbound calls","all",
+      "Inverse of calls per AWB: unique called AWBs ÷ outbound call records."],
+    ["Completed calls",completed,pct(completed,totalCalls),"completed",
+      "Completed outbound calls ÷ total outbound calls × 100."],
+    ["Failed calls",failed,pct(failed,totalCalls),"failed",
+      "Failed outbound calls ÷ total outbound calls × 100."],
+    ["No-answer calls",noanswer,pct(noanswer,totalCalls),"no-answer",
+      "No-answer outbound calls ÷ total outbound calls × 100."],
+    ["Delivered",delivered,deliveredPct,"delivered",
+      "Called AWBs whose LATEST ClickPost status is Delivered ÷ all called AWBs × 100."],
+    ["RTO",rto,rtoPct,"rto",
+      "Called AWBs whose LATEST ClickPost status contains RTO ÷ all called AWBs × 100."],
+    ["Other latest status",otherStatus,otherPct,"other",
+      "Called AWBs with a latest ClickPost status that is neither Delivered nor RTO."]
+  ];
+  if(unknownStatus>0) kpis.push(["Status unavailable",unknownStatus,pct(unknownStatus,called),"unknown",
+      "Called AWBs where ClickPost did not provide a usable latest status."]);
+
+  document.getElementById("kpis").innerHTML=kpis.map(([label,value,sub,key,tip])=>`
+    <div class="panel kpi" data-kpi="${key}">
+      <div class="label">${label} <span class="info" data-tooltip="${esc(tip)}" tabindex="0" aria-label="More information">i</span></div>
+      <div class="value">${typeof value==="number"?value.toLocaleString("en-IN"):value}</div>
+      <div class="sub">${sub}</div>
+    </div>`).join("");
+
+  document.querySelectorAll("[data-kpi]").forEach(el=>el.onclick=()=>{
+    const k=el.dataset.kpi;
+    if(k==="completed"||k==="failed"||k==="no-answer")filterCallStatus(k);
+    else if(["delivered","rto","other","unknown"].includes(k))filterOutcome(
+      k==="delivered"?"Delivered":k==="rto"?"RTO":k==="other"?"Other latest status":"Status unavailable"
+    );
+    else resetFilters();
+  });
+
+  document.getElementById("callMini").innerHTML=[
+    ["Completed rate",pct(completed,totalCalls),"Completed outbound calls ÷ all outbound calls"],
+    ["Failed rate",pct(failed,totalCalls),"Failed outbound calls ÷ all outbound calls"],
+    ["No-answer rate",pct(noanswer,totalCalls),"No-answer outbound calls ÷ all outbound calls"],
+    ["ClickPost mapped",`${rows.filter(r=>r.shipmentFound).length.toLocaleString("en-IN")} (${pct(rows.filter(r=>r.shipmentFound).length,called)})`,
+      "Called AWBs found in the ClickPost sheet"]
+  ].map(x=>`<div class="mini"><div class="v">${x[1]}</div><div class="l">${x[0]} <span class="info" data-tooltip="${esc(x[2])}" tabindex="0" aria-label="More information">i</span></div></div>`).join("");
+
+  destroyCharts();
+
+  makeChart("callHealthChart","bar",{
+    labels:["Completed","Failed","No answer"],
+    datasets:[{label:"Outbound calls",data:[completed,failed,noanswer],backgroundColor:[colors.green,colors.red,colors.amber]}]
+  },{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false}},
+    scales:{y:{beginAtZero:true}},
+    onClick:(e,els)=>{if(els.length)filterCallStatus(["completed","failed","no-answer"][els[0].index])}
+  });
+
+  const statusOutcomeCount=Object.create(null);
+  rows.forEach(r=>{
+    statusOutcomeCount[r.lastStatus]=(statusOutcomeCount[r.lastStatus]||0)+1;
+  });
+
+  const outcomeKeys=[
+    ["delivered","Delivered",colors.green],
+    ["rto","RTO",colors.red],
+    ["other","Other latest status",colors.blue]
+  ];
+  if(unknownStatus>0) outcomeKeys.push(["unknown","Status unavailable",colors.gray]);
+
+  makeChart("outcomeChart","doughnut",{
+    labels:outcomeKeys.map(x=>x[1]),
+    datasets:[{
+      data:outcomeKeys.map(x=>rows.filter(r=>r.outcomeKey===x[0]).length),
+      backgroundColor:outcomeKeys.map(x=>x[2]),
+      borderWidth:2
+    }]
+  },{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{position:"bottom",labels:{boxWidth:12}}},
+    onClick:(e,els)=>{
+      if(!els.length)return;
+      const key=outcomeKeys[els[0].index][0];
+      filterOutcome(key==="delivered"?"Delivered":key==="rto"?"RTO":key==="other"?"Other latest status":"Status unavailable");
+    }
+  });
+
+  makeChart("outcomeBar","bar",{
+    labels:outcomeKeys.map(x=>x[1]),
+    datasets:[{
+      label:"Called AWBs",
+      data:outcomeKeys.map(x=>rows.filter(r=>r.outcomeKey===x[0]).length),
+      backgroundColor:outcomeKeys.map(x=>x[2])
+    }]
+  },{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false}},
+    scales:{y:{beginAtZero:true}},
+    onClick:(e,els)=>{
+      if(!els.length)return;
+      const map=outcomeKeys.map(x=>x[1]);
+      filterOutcome(map[els[0].index]);
+    }
+  });
+
+  makeChart("deliveryChart","doughnut",{
+    labels:["Delivered","Not delivered"],
+    datasets:[{
+      data:[delivered,Math.max(0,called-delivered)],
+      backgroundColor:[colors.green,colors.gray],
+      borderWidth:2
+    }]
+  },{
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{position:"bottom"}}
+  });
+
+  const statuses=[["completed","Completed"],["no-answer","No answer"],["failed","Failed"],["missed-call","Missed"]];
+  const statusLatest={
+    delivered: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="delivered").length),
+    rto: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="rto").length),
+    other: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length)
+  };
+
+  makeChart("statusOutcomeChart","bar",{
+    labels:statuses.map(x=>x[1]),
+    datasets:[
+      {label:"Delivered",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="delivered").length),backgroundColor:colors.green},
+      {label:"RTO",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="rto").length),backgroundColor:colors.red},
+      {label:"Other latest status",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length),backgroundColor:colors.blue}
+    ]
+  },{
+    responsive:true,maintainAspectRatio:false,
+    scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}},
+    onClick:(e,els)=>{if(els.length)filterCallStatus(statuses[els[0].index][0])}
+  });
+
+  const freq=[
+    rows.filter(r=>r.callCount===1).length,
+    rows.filter(r=>r.callCount===2).length,
+    rows.filter(r=>r.callCount===3).length,
+    rows.filter(r=>r.callCount>=4).length
+  ];
+  makeChart("frequencyChart","bar",{
+    labels:["1 call","2 calls","3 calls","4+ calls"],
+    datasets:[{label:"Unique AWBs",data:freq,backgroundColor:colors.blue}]
+  },{
+    responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+    scales:{y:{beginAtZero:true}},
+    onClick:(e,els)=>{if(els.length)filterCalls(els[0].index===3?"4+":String(els[0].index+1))}
+  });
+
+  const daily={};
+  rows.forEach(r=>{
+    const d=isoDate(r.firstCall);
+    if(d)daily[d]=(daily[d]||0)+r.callCount;
+  });
+  const dates=Object.keys(daily).sort();
+  makeChart("dailyChart","line",{
+    labels:dates,
+    datasets:[{label:"Outbound calls",data:dates.map(d=>daily[d]),borderWidth:2,tension:.25,pointRadius:3}]
+  },{
+    responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+    scales:{y:{beginAtZero:true}}
+  });
+
+  const displayRows=rows.slice()
+    .sort((a,b)=>(b.firstCall?.getTime()||0)-(a.firstCall?.getTime()||0))
+    .slice(0,2000);
+
+  document.getElementById("tbody").innerHTML=displayRows.map(r=>`
+    <tr>
+      <td><b>${esc(r.awb)}</b></td>
+      <td>${fmtDate(r.firstCall)}</td>
+      <td>${fmtDate(r.lastCall)}</td>
+      <td>${r.callCount}</td>
+      <td>${r.completed}</td>
+      <td>${r.failed}</td>
+      <td>${r.noanswer}</td>
+      <td>${r.missed}</td>
+      <td>${badge(r.lastStatus)}</td>
+      <td>${esc(r.payment||"—")}</td>
+      <td>${outcomeBadge(r.outcomeKey,r.outcome)}</td>
+      <td>${fmtDate(r.outcomeDate)}</td>
+      <td>${esc(r.currentStatus||"—")}</td>
+      <td>${money(r.totalCost)}</td>
+    </tr>`).join("");
+
+  document.getElementById("empty").style.display=displayRows.length?"none":"block";
+
+  const avgCalls=called?totalCalls/called:0;
+  document.getElementById("tableMeta").textContent=
+    `${called.toLocaleString("en-IN")} called AWBs shown · ${totalCalls.toLocaleString("en-IN")} outbound calls · ${avgCalls.toFixed(2)} calls/AWB · ${money(cost)} outbound call cost`;
+}
+
+function badge(s){
+  const k=lower(s);let c="gray";
+  if(k==="completed")c="green";else if(k==="failed")c="red";else if(k==="no-answer")c="amber";else if(k==="missed-call")c="gray";else if(k.includes("delivered"))c="green";else if(k.includes("rto"))c="red";
+  return `<span class="badge ${c}">${esc(s||"—")}</span>`;
+}
+function outcomeBadge(k,l){
+  const c={delivered:"green",rto:"red",other:"blue",unknown:"gray"}[k]||"gray";
+  return `<span class="badge ${c}">${esc(l)}</span>`;
+}
+
+["fOutcome","fCallStatus","fPayment","fCalls","fFrom","fTo"].forEach(id=>{
+  document.getElementById(id).addEventListener("input",()=>applyFilters());
+});
+let filterTimer;
+["search","tableSearch"].forEach(id=>{
+  document.getElementById(id).addEventListener("input",()=>{
+    clearTimeout(filterTimer);
+    filterTimer=setTimeout(()=>applyFilters(),120);
+  });
+});
+document.getElementById("refreshBtn").onclick=loadData;
+document.getElementById("refreshBtnBottom").onclick=loadData;
+document.getElementById("resetBtn").onclick=resetFilters;
+
+loadData();
+</script>
+</body>
+</html>
