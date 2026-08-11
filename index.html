@@ -80,6 +80,7 @@ details summary{cursor:pointer;font-weight:700}
 
 <div class="panel status" id="status"><span class="dot"></span><span>Loading Google Sheets…</span></div>
 
+
 <details class="panel filters" open>
   <summary>Filters</summary>
   <div class="filter-grid">
@@ -138,6 +139,23 @@ details summary{cursor:pointer;font-weight:700}
     <div class="desc">Daily outbound call volume. Click a day to filter to AWBs whose first call was on that date.</div>
     <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
   </section>
+<section class="panel card span-12" id="awbAuditPanel">
+  <h2>AWB matching audit</h2>
+  <div class="desc">Raw AWBs received from Exotel and ClickPost, using the unchanged V3 exact matcher.</div>
+  <div class="table-scroll" style="max-height:320px">
+    <table style="min-width:900px">
+      <thead><tr><th>Exotel AWB</th><th>V3 key</th><th>ClickPost AWB received</th><th>Match</th></tr></thead>
+      <tbody id="awbAuditBody"></tbody>
+    </table>
+  </div>
+</section>
+
+
+<section class="panel card span-12" id="awbRcaPanel">
+  <h2>Merged_Data source check</h2>
+  <div class="desc">AWB matching is completed in Google Sheets before this dashboard loads. This dashboard does not perform a second Exotel ↔ ClickPost join.</div>
+  <div id="awbRcaSummary" class="mini-grid"></div>
+</section>
 <section class="panel table-panel span-12">
     <div class="table-head">
       <div><h2>AWB-level calling report <span class="info" data-tooltip="One row per unique AWB that had at least one outbound call. Clickable dashboard metrics filter this table." tabindex="0" aria-label="More information">i</span></h2><small id="tableMeta"></small></div>
@@ -158,29 +176,27 @@ details summary{cursor:pointer;font-weight:700}
 </div>
 
 <div class="panel" style="padding:16px;margin-bottom:16px">
-  <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+  <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
     <div>
-      <label>Exotel / NDR Calling Google Sheet</label>
-      <input id="exoUrl" value="https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing">
-    </div>
-    <div>
-      <label>ClickPost Google Sheet</label>
-      <input id="cpUrl" value="https://docs.google.com/spreadsheets/d/1XyoDQmsAvGCESvy-sOxelQ6uoSGCBPEOodmXcoi2k4o/edit?usp=sharing">
+      <label>Merged Data Google Sheet</label>
+      <input id="mergedUrl" value="https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing">
+      <div class="source-help">
+        Dashboard source: <b>Merged_Data</b> tab only. The AWB merge is already done in Google Sheets.
+      </div>
     </div>
     <button class="btn primary" id="refreshBtnBottom">Refresh live data</button>
   </div>
-  <div class="source-help">Paste or replace either Google Sheet link and click <b>Refresh live data</b>. The selected tab is read by its gid; if no gid is present, gid=0 is used.</div>
 </div>
 
 <div class="footer">
-  Logic: only AWBs with ≥1 outbound NDR call are included. Delivery and RTO are calculated from the LATEST ClickPost status for those called AWBs. No shipment metrics are calculated for uncalled AWBs.
+  Logic: AWB matching uses the V3 exact full-string matcher. Only AWBs with ≥1 outbound NDR call are included. Delivery and RTO are calculated from the LATEST ClickPost status for those called AWBs. No shipment metrics are calculated for uncalled AWBs.
 </div>
 </div>
 
 <script>
 const DEFAULTS={
-  exotel:"https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing",
-  clickpost:"https://docs.google.com/spreadsheets/d/1XyoDQmsAvGCESvy-sOxelQ6uoSGCBPEOodmXcoi2k4o/edit?usp=sharing"
+  merged:"https://docs.google.com/spreadsheets/d/19vLCLxTogtuKnENLcC79aHcBZ7bE2qVPPcSxxXNA5oA/edit?usp=sharing",
+  sheet:"Merged_Data"
 };
 const state={all:[],filtered:[],charts:{},filters:{},search:"",tableSearch:"",loading:false};
 
@@ -190,6 +206,163 @@ function setStatus(msg,type="loading"){
 }
 function sheetId(url){const m=(url||"").match(/\/spreadsheets\/d\/([A-Za-z0-9-_]+)/);return m?m[1]:null}
 function sheetGid(url){const m=(url||"").match(/[?&#]gid=([0-9]+)/);return m?m[1]:"0"}
+
+async function googleSheetCSV(raw){
+  const m=String(raw||"").match(/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+  if(!m) throw new Error("Invalid Google Sheets URL.");
+
+  const g=String(raw||"").match(/[?#&]gid=(\d+)/);
+  const gid=g?g[1]:"0";
+
+  // Pull the sheet as CSV. This avoids Google Visualization row/cell
+  // conversion issues on large ClickPost sheets.
+  const url=`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv&gid=${gid}`;
+
+  const response=await fetch(url,{cache:"no-store"});
+  if(!response.ok) throw new Error(`Google Sheet CSV request failed (${response.status}).`);
+
+  const text=await response.text();
+  return parseCSVText(text);
+}
+
+function parseCSVText(text){
+  const rows=[];
+  let row=[], field="", quoted=false;
+
+  text=String(text||"").replace(/^\uFEFF/,"");
+
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+
+    if(quoted){
+      if(c==='"'){
+        if(text[i+1]==='"'){field+='"';i++;}
+        else quoted=false;
+      }else{
+        field+=c;
+      }
+      continue;
+    }
+
+    if(c==='"'){quoted=true;continue;}
+    if(c===','){row.push(field);field="";continue;}
+    if(c==='\n'){
+      row.push(field);field="";
+      if(row.some(v=>String(v).trim()!==""))rows.push(row);
+      row=[];
+      continue;
+    }
+    if(c==='\r'){
+      if(text[i+1]==='\n')i++;
+      row.push(field);field="";
+      if(row.some(v=>String(v).trim()!==""))rows.push(row);
+      row=[];
+      continue;
+    }
+    field+=c;
+  }
+
+  row.push(field);
+  if(row.some(v=>String(v).trim()!==""))rows.push(row);
+
+  if(!rows.length) return {cols:[],rows:[]};
+
+  const cols=rows[0].map(v=>String(v??"").trim());
+  return {
+    cols,
+    rows:rows.slice(1).map(r=>cols.map((_,i)=>r[i]??""))
+  };
+}
+
+
+async function loadMergedDataSheet(raw){
+  const m=String(raw||"").match(/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+  if(!m) throw new Error("Invalid Google Sheets URL.");
+
+  const sheetName="Merged_Data";
+  const encodedSheet=encodeURIComponent(sheetName);
+
+  // Published/exported CSV for a named tab. This avoids requiring the gid.
+  const urls=[
+    `https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv&sheet=${encodedSheet}`,
+    `https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?tqx=out:csv&sheet=${encodedSheet}`
+  ];
+
+  let lastError=null;
+  for(const url of urls){
+    try{
+      const response=await fetch(url,{cache:"no-store"});
+      if(!response.ok) throw new Error(`Sheet request failed (${response.status}).`);
+      const text=await response.text();
+      const parsed=parseCSVText(text);
+      if(parsed.cols.length && parsed.rows.length) return parsed;
+    }catch(e){
+      lastError=e;
+    }
+  }
+
+  // Fallback: if the named-tab export is blocked, use gviz JSONP with sheet=
+  return await googleVizMergedData(raw);
+}
+
+function googleVizMergedData(raw){
+  return new Promise((resolve,reject)=>{
+    const m=String(raw||"").match(/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+    if(!m) return reject(new Error("Invalid Google Sheets URL."));
+
+    const cb="merged_"+Date.now()+"_"+Math.floor(Math.random()*1e6);
+    const script=document.createElement("script");
+    let done=false;
+
+    const cleanup=()=>{
+      clearTimeout(timer);
+      try{delete window[cb]}catch(_){}
+      script.remove();
+    };
+    const fail=(err)=>{
+      if(done)return;
+      done=true; cleanup(); reject(err);
+    };
+
+    const timer=setTimeout(
+      ()=>fail(new Error("Merged_Data Google Sheet did not respond within 60 seconds.")),
+      60000
+    );
+
+    window[cb]=(resp)=>{
+      if(done)return;
+      try{
+        if(!resp || resp.status!=="ok"){
+          throw new Error(resp?.errors?.[0]?.detailed_message || "Google Sheets returned an error.");
+        }
+        const cols=(resp.table?.cols||[]).map((c,i)=>c.label||`Column ${i+1}`);
+        const rows=(resp.table?.rows||[]).map(row=>
+          cols.map((_,i)=>{
+            const cell=(row.c||[])[i];
+            return cell ? (cell.f ?? cell.v ?? "") : "";
+          })
+        );
+        done=true; cleanup();
+        resolve({cols,rows});
+      }catch(e){fail(e);}
+    };
+
+    script.onerror=()=>fail(new Error("Could not load Merged_Data from Google Sheets."));
+    script.src=`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?sheet=Merged_Data&tqx=responseHandler:${cb}`;
+    document.head.appendChild(script);
+  });
+}
+
+async function loadSheet(raw){
+  try{
+    return await googleSheetCSV(raw);
+  }catch(csvErr){
+    // Fallback to the existing JSONP loader if CSV export is blocked.
+    console.warn("CSV export failed; falling back to Google Visualization:",csvErr);
+
+    return await googleVizJsonp(raw);
+  }
+}
 
 function googleVizJsonp(raw){
   return new Promise((resolve,reject)=>{
@@ -209,14 +382,12 @@ function googleVizJsonp(raw){
     };
     const fail=(err)=>{
       if(done)return;
-      done=true;
-      cleanup();
-      reject(err);
+      done=true;cleanup();reject(err);
     };
 
     const timer=setTimeout(
-      ()=>fail(new Error("Google Sheets did not respond within 20 seconds. The dashboard will keep using cached data if available.")),
-      20000
+      ()=>fail(new Error("Google Sheets did not respond within 60 seconds.")),
+      60000
     );
 
     window[cb]=(resp)=>{
@@ -234,25 +405,80 @@ function googleVizJsonp(raw){
           })
         );
 
-        done=true;
-        cleanup();
-        resolve({cols,rows});
-      }catch(err){
-        fail(err);
-      }
+        done=true;cleanup();resolve({cols,rows});
+      }catch(err){fail(err);}
     };
 
-    script.onerror=()=>fail(new Error("Could not connect to Google Sheets. Check that both sheets are shared with link access."));
-
-    // Keep the fast loading method used by this dashboard:
-    // one lightweight Google Visualization JSONP request per source,
-    // both requests started at the same time.
+    script.onerror=()=>fail(new Error("Could not connect to Google Sheets."));
     script.src=`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?gid=${gid}&tqx=responseHandler:${cb}`;
     document.head.appendChild(script);
   });
 }
 
 function normalize(v){return String(v??"").trim()}
+
+// EXACT AWB MATCHING
+// Exotel CustomField format: "awb_number=SF3685267839NUB"
+// Take only the value between the '=' and the closing double quote.
+function getExotelAWB(customField){
+  let s=String(customField ?? "").trim();
+
+  // V3 supports the actual Exotel CustomField representation:
+  // "awb_number=SF3778234329NUB"
+  // awb_number=SF3778234329NUB
+  // {"awb_number":"SF3778234329NUB"}
+  s=s.replace(/^["']+|["']+$/g,"").trim();
+
+  let m=s.match(/(?:^|[|;,])\s*awb_number\s*=\s*["']?([^"';|,\s]+)["']?/i);
+  if(m) return m[1].trim();
+
+  m=s.match(/["']awb_number["']\s*:\s*["']([^"']+)["']/i);
+  if(m) return m[1].trim();
+
+  return "";
+}
+
+// V3 AWB MATCHING — DO NOT CHANGE
+// The complete AWB string is the key.
+// Only outer whitespace is trimmed.
+// No numeric extraction.
+// No removal of SF/PA/NUB/etc.
+// No punctuation stripping.
+// No fuzzy/substring matching.
+function normalizeAwbKey(v){
+  return String(v ?? "").trim();
+}
+
+function awbMatchKey(v){
+  return String(v ?? "").trim();
+}
+
+function getExotelAWB(customField){
+  let s=String(customField ?? "").trim();
+
+  // Exact V3 extraction.
+  s=s.replace(/^["']+|["']+$/g,"").trim();
+
+  let m=s.match(/(?:^|[|;,])\s*awb_number\s*=\s*["']?([^"';|,\s]+)["']?/i);
+  if(m) return m[1].trim();
+
+  m=s.match(/["']awb_number["']\s*:\s*["']([^"']+)["']/i);
+  if(m) return m[1].trim();
+
+  return "";
+}
+
+function assertV3AwbLogic(){
+  const cases=[
+    ["SF3778234329NUB","SF3778234329NUB",true],
+    ["SF3778234329NUB","sf3778234329nub",false],
+    ["SF3778234329NUB","3778234329",false],
+    ["PA123456","PA123456",true],
+    ["PA123456","PA1234567",false]
+  ];
+  return cases.every(([a,b,expected]) => (awbMatchKey(a)===awbMatchKey(b))===expected);
+}
+
 function lower(v){return normalize(v).toLowerCase()}
 function parseDate(v){
   if(!v)return null;
@@ -268,58 +494,29 @@ function num(v){const n=parseFloat(String(v??"").replace(/[^0-9.-]/g,""));return
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function rowsToObjects(sheet){return sheet.rows.map(r=>Object.fromEntries(sheet.cols.map((c,i)=>[c,r[i]??""])))}
 
-function parseAWB(v){
-  const s=normalize(v);
-  let m=s.match(/awb_number\s*=\s*([^\s;"']+)/i);
-  if(m)return m[1].trim();
-  m=s.match(/awb(?:number)?\s*[:=]\s*([A-Za-z0-9_-]+)/i);
-  if(m)return m[1].trim();
-  return "";
-}
-
 function classify(shipment,firstCall){
-  // Calling conversion is based on the CURRENT/LATEST ClickPost status.
-  // The denominator is the called-AWB population only.
-  // A called AWB is "Delivered" when ClickPost's latest status is Delivered.
-  // We do not use OFD/RTO timestamps or a generic "post-call shipment event"
-  // because every shipment has a latest status and that is the requested source of truth.
-  const status=normalize(shipment.status).toLowerCase();
+  const status=normalize(shipment.status);
+  const low=status.toLowerCase();
 
-  if(status.includes("rto")){
+  if(low.includes("rto")){
     return {key:"rto",label:"RTO",date:null};
   }
-  if(status==="delivered" || status.includes("delivered")){
+
+  if(low==="delivered" || low.includes("delivered")){
     return {key:"delivered",label:"Delivered",date:null};
   }
+
   if(status){
-    return {key:"other",label:shipment.status,date:null};
+    // IMPORTANT: preserve the exact latest ClickPost status.
+    // Do not collapse it into "Other".
+    return {
+      key:"status:"+status,
+      label:status,
+      date:null
+    };
   }
+
   return {key:"unknown",label:"Status unavailable",date:null};
-}
-
-const CACHE_KEY="ndr_calling_dashboard_cache_v4";
-
-function saveCache(payload){
-  try{
-    localStorage.setItem(CACHE_KEY,JSON.stringify({
-      savedAt:Date.now(),
-      rows:payload.rows,
-      meta:payload.meta
-    }));
-  }catch(e){}
-}
-
-function readCache(){
-  try{
-    const x=JSON.parse(localStorage.getItem(CACHE_KEY)||"null");
-    if(!x||!Array.isArray(x.rows))return null;
-    x.rows.forEach(r=>{
-      ["firstCall","lastCall","outcomeDate"].forEach(k=>{
-        if(r[k]) r[k]=parseDate(r[k]);
-      });
-    });
-    return x;
-  }catch(e){return null}
 }
 
 function setRows(rows,meta){
@@ -332,66 +529,99 @@ function setRows(rows,meta){
 async function loadData(){
   if(state.loading)return;
   state.loading=true;
-  setStatus("Connecting to the 2 linked Google Sheets…");
-  const cached=readCache();
-
-  // Paint the last successful result immediately. Live refresh then happens
-  // in the background, so the dashboard never sits on a blank screen.
-  if(cached){
-    setRows(cached.rows,cached.meta);
-    setStatus(`Showing cached data from ${new Date(cached.savedAt).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"})} · refreshing live data…`);
-  }else{
-    setStatus("Loading live Google Sheets data…");
-  }
+  setStatus("Loading live data from Merged_Data…");
 
   try{
-    // User-provided order: Exotel = calling, ClickPost = shipment.
-    // Query only the fields used by this dashboard. If a sheet has unusual
-    // headers, fall back to the full-sheet request automatically.
-    const callingUrl=document.getElementById("exoUrl").value;
-    const shipmentUrl=document.getElementById("cpUrl").value;
+    const mergedUrl=document.getElementById("mergedUrl").value.trim();
+    const sheet=await loadMergedDataSheet(mergedUrl);
+    const data=rowsToObjects(sheet);
 
-    // Do not query the sheets twice or run header-specific queries.
-    // The source dashboard's fast path is two parallel Google Visualization
-    // JSONP requests, one for each already-linked sheet.
-    const [callingSheet,shipmentSheet]=await Promise.all([
-      googleVizJsonp(callingUrl),
-      googleVizJsonp(shipmentUrl)
-    ]);
-
-    const calling=rowsToObjects(callingSheet);
-    const shipment=rowsToObjects(shipmentSheet);
-
-    const shipments=new Map();
-    for(const r of shipment){
-      const awb=normalize(r["AWB"]||r["awb"]);
-      if(!awb)continue;
-      shipments.set(awb,{
-        payment:normalize(r["Payment Mode"]),
-        status:normalize(r["Latest Status"])
-      });
+    if(!sheet.cols.length){
+      throw new Error("Merged_Data returned no columns.");
+    }
+    if(!data.length){
+      throw new Error("Merged_Data returned no rows.");
     }
 
+    // Merged_Data is now the single source of truth.
+    // Do not perform any AWB join here.
+    const col=(names)=>{
+      for(const wanted of names){
+        const found=sheet.cols.find(c=>String(c).trim().toLowerCase()===wanted.toLowerCase());
+        if(found)return found;
+      }
+      return null;
+    };
+
+    const awbCol=col(["AWB"]);
+    const callIdCol=col(["Call ID","ID","Id"]);
+    const directionCol=col(["Direction"]);
+    const statusCol=col(["Status"]);
+    const startCol=col(["StartTime","Start Time"]);
+    const endCol=col(["EndTime","End Time"]);
+    const durationCol=col(["Duration"]);
+    const priceCol=col(["Price"]);
+    const conversationCol=col(["ConversationDuration","Conversation Duration"]);
+    const fromCol=col(["From"]);
+    const toCol=col(["To"]);
+    const disconnectedCol=col(["DisconnectedBy","Disconnected By"]);
+    const paymentCol=col(["Payment Mode","Payment"]);
+    const latestStatusCol=col(["Latest Status","ClickPost Status","Current Shipment Status"]);
+    const deliveryCol=col(["Delivery Timestamp"]);
+    const rtoMarkCol=col(["RTO Mark Timestamp"]);
+    const rtoDeliveredCol=col(["RTO Delivered Timestamp"]);
+    const attemptsCol=col(["Delivery Attempts","Number of Delivery Attempts"]);
+    const failedAttemptsCol=col(["Failed Delivery Attempts","Number of Failed Delivery Attempts"]);
+    const ofdCol=col(["Latest OFD Timestamp"]);
+
+    if(!awbCol){
+      throw new Error("Merged_Data does not contain an AWB column.");
+    }
+
+    // This dashboard expects the merge to already be completed in Google Sheets.
+    // It does not perform an Exotel ↔ ClickPost join here.
+    const missingRecommended=[];
+    [["Call ID",callIdCol],["Direction",directionCol],["Status",statusCol],
+     ["StartTime",startCol],["Latest Status",latestStatusCol]].forEach(([name,value])=>{
+       if(!value) missingRecommended.push(name);
+     });
+
+    // Aggregate call-level rows by AWB. ClickPost fields are already merged
+    // into each row in Google Sheets.
     const agg=new Map();
     let outboundRecords=0;
-    for(const r of calling){
-      const direction=lower(r["Direction"]);
-      const awb=parseAWB(r["CustomField"]);
-      const outbound=direction.includes("outbound");
 
-      if(outbound)outboundRecords++;
+    for(const r of data){
+      const awb=normalize(r[awbCol]);
       if(!awb)continue;
 
-      if(!agg.has(awb))agg.set(awb,{awb,calls:[]});
+      const direction=lower(directionCol ? r[directionCol] : "");
+      const outbound=direction.includes("outbound");
+      if(outbound)outboundRecords++;
+
+      if(!agg.has(awb)){
+        agg.set(awb,{
+          awb,
+          rows:[],
+          calls:[]
+        });
+      }
+
       const a=agg.get(awb);
+      a.rows.push(r);
 
       if(outbound){
         a.calls.push({
-          start:parseDate(r["StartTime"]),
-          status:lower(r["Status"]),
-          duration:num(r["Duration"]),
-          conversation:num(r["ConversationDuration"]),
-          price:num(r["Price"])
+          start:parseDate(startCol ? r[startCol] : ""),
+          end:parseDate(endCol ? r[endCol] : ""),
+          status:lower(statusCol ? r[statusCol] : ""),
+          duration:num(durationCol ? r[durationCol] : ""),
+          conversation:num(conversationCol ? r[conversationCol] : ""),
+          price:num(priceCol ? r[priceCol] : ""),
+          callId:callIdCol ? r[callIdCol] : "",
+          from:fromCol ? r[fromCol] : "",
+          to:toCol ? r[toCol] : "",
+          disconnectedBy:disconnectedCol ? r[disconnectedCol] : ""
         });
       }
     }
@@ -399,38 +629,69 @@ async function loadData(){
     const rows=[];
     for(const a of agg.values()){
       if(!a.calls.length)continue;
+
       a.calls.sort((x,y)=>(x.start?.getTime()||0)-(y.start?.getTime()||0));
       const first=a.calls.find(c=>c.start)?.start;
-      if(!first)continue;
       const last=a.calls[a.calls.length-1];
-      const s=shipments.get(a.awb);
+      if(!first)continue;
+
+      // ClickPost data is already joined. Take the latest available shipment row.
+      const shipmentRow=a.rows[a.rows.length-1]||{};
+
       const counts={
         completed:a.calls.filter(c=>c.status==="completed").length,
         failed:a.calls.filter(c=>c.status==="failed").length,
         noanswer:a.calls.filter(c=>c.status==="no-answer").length,
         missed:a.calls.filter(c=>c.status==="missed-call").length
       };
-      const outcome=s?classify(s,first):{key:"no_match",label:"No ClickPost match",date:null};
+
+      const currentStatus=normalize(latestStatusCol ? shipmentRow[latestStatusCol] : "");
+      const outcome=classify({status:currentStatus},first);
+
       rows.push({
-        awb:a.awb,firstCall:first,lastCall:last.start,callCount:a.calls.length,
-        ...counts,lastStatus:last.status,
-        payment:s?.payment||"Unknown",outcomeKey:outcome.key,outcome:outcome.label,
-        outcomeDate:outcome.date,currentStatus:s?.status||"No ClickPost match",
-totalCost:a.calls.reduce((x,c)=>x+c.price,0),
+        awb:a.awb,
+        firstCall:first,
+        lastCall:last.start,
+        callCount:a.calls.length,
+        ...counts,
+        lastStatus:last.status,
+        payment:paymentCol ? normalize(shipmentRow[paymentCol]) : "Unknown",
+        outcomeKey:outcome.key,
+        outcome:outcome.label,
+        outcomeDate:outcome.date,
+        currentStatus:currentStatus || "Status unavailable",
+        totalCost:a.calls.reduce((x,c)=>x+c.price,0),
         avgDuration:a.calls.reduce((x,c)=>x+c.duration,0)/a.calls.length,
         avgConversation:a.calls.reduce((x,c)=>x+c.conversation,0)/a.calls.length,
-        shipmentFound:!!s
+        shipmentFound:!!currentStatus,
+        clickPostAWBRaw:a.awb
       });
     }
 
-    setRows(rows,{outboundRecords,shipmentRows:shipment.length});
-    saveCache({
-      rows,
-      meta:{outboundRecords,shipmentRows:shipment.length}
-    });
+    const matchedAwbs=rows.length;
+    const unmatchedAwbs=0;
+
+    state.all=rows;
+    populateFilters();
+    applyFilters(true);
+
+    const diag=document.getElementById("matchDiagnostics");
+    if(diag){
+      diag.innerHTML=
+        `<b>Single-source dashboard</b> · Sheet: <b>Merged_Data</b> · `+
+        `Rows loaded: <b>${data.length.toLocaleString("en-IN")}</b> · `+
+        `Unique called AWBs: <b>${rows.length.toLocaleString("en-IN")}</b> · `+
+        `AWB join performed: <b>0 in browser</b> · `+
+        (missingRecommended.length
+          ? `Missing recommended columns: <b>${esc(missingRecommended.join(", "))}</b>`
+          : `All required dashboard columns detected`) +
+        ` · Source merge is handled in Google Sheets.`;
+    }
+
+    setStatus(`Merged_Data loaded · ${rows.length.toLocaleString("en-IN")} called AWBs`, "ok");
   }catch(e){
     console.error(e);
-    setStatus((e.message||"Could not load the Google Sheets.")+" Click Refresh live data to try again.","err");
+    setStatus((e.message||"Could not load Merged_Data.")+" Click Refresh live data to try again.","err");
   }finally{
     state.loading=false;
   }
@@ -488,6 +749,107 @@ function pct(n,d){return d?((n/d)*100).toFixed(1)+"%":"0.0%"}
 function avg(arr){return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0}
 function money(n){return "₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}
 
+function buildAWBRCA(){
+  const box=document.getElementById("awbRcaBody");
+  const summary=document.getElementById("awbRcaSummary");
+  if(!box||!summary)return;
+
+  // Build the exact ClickPost key set from the already-loaded Google Sheet.
+  // This uses the same V3 key function as the matcher: trim outer whitespace only.
+  // NOTE: this is diagnostic only; it does not change the match.
+  const clickKeys=new Map();
+  if(window.__clickpostRcaRows){
+    for(const x of window.__clickpostRcaRows){
+      clickKeys.set(x.key,x.raw);
+    }
+  }
+
+  const items=[];
+  const counts={
+    total:0, noExtract:0, exactMissing:0, exactFound:0,
+    customFieldMissing:0, duplicate:0
+  };
+
+  if(window.__exoRcaRows){
+    for(const x of window.__exoRcaRows){
+      const rawCF=String(x.customField??"");
+      const awb=typeof getExotelAWB==="function" ? getExotelAWB(rawCF) : "";
+
+      if(!rawCF.trim()){
+        counts.customFieldMissing++;
+        continue;
+      }
+      if(!awb){
+        counts.noExtract++;
+        items.push({
+          exoAwb:"",
+          raw:rawCF,
+          key:"",
+          click:"",
+          reason:"V3 could not extract awb_number"
+        });
+        continue;
+      }
+
+      const key=awbMatchKey(awb);
+      counts.total++;
+
+      if(clickKeys.has(key)){
+        counts.exactFound++;
+        continue;
+      }
+
+      counts.exactMissing++;
+
+      let reason="No exact ClickPost AWB key";
+      // RCA against common invisible-character cases, without using them for matching.
+      const compact=v=>String(v??"").replace(/[\u200B-\u200D\uFEFF\u00A0]/g," ").trim();
+
+      const sameIgnoreCase=[...clickKeys.keys()].find(k=>k.toUpperCase()===key.toUpperCase());
+      if(sameIgnoreCase) reason="Case differs from ClickPost";
+      else if(clickKeys.has(compact(key))) reason="Invisible/whitespace difference";
+      else {
+        // Identify if ClickPost has same digits / suffix but not full AWB.
+        const alnum=s=>String(s||"").replace(/[^A-Z0-9]/gi,"").toUpperCase();
+        const sig=alnum(key);
+        const partial=[...clickKeys.keys()].find(k=>{
+          const z=alnum(k);
+          return z===sig || z.endsWith(sig) || z.includes(sig) || sig.includes(z);
+        });
+        if(partial) reason="Similar/partial AWB exists, but exact V3 string does not";
+      }
+
+      items.push({
+        exoAwb:awb,
+        raw:rawCF,
+        key:key,
+        click:clickKeys.get(key)||"",
+        reason:reason
+      });
+    }
+  }
+
+  summary.innerHTML=[
+    ["Unmatched AWBs",counts.exactMissing,"bad"],
+    ["V3 extraction failures",counts.noExtract,"bad"],
+    ["Missing CustomField",counts.customFieldMissing,"bad"],
+    ["Exact matches verified",counts.exactFound,"good"],
+    ["Exotel AWBs checked",counts.total,""]
+  ].map(([l,v,c])=>`<div class="mini"><div class="v ${c}">${Number(v).toLocaleString("en-IN")}</div><div class="l">${l}</div></div>`).join("");
+
+  box.innerHTML=items.slice(0,500).map(x=>`
+    <tr>
+      <td><b>${esc(x.exoAwb||"—")}</b></td>
+      <td>${esc(x.raw||"—")}</td>
+      <td>${esc(x.exoAwb||"—")}</td>
+      <td>${esc(x.key||"—")}</td>
+      <td>${esc(window.__clickpostAwbHeader||"AWB")}</td>
+      <td>${esc(x.click||"—")}</td>
+      <td><span class="badge red">${esc(x.reason)}</span></td>
+    </tr>
+  `).join("");
+}
+
 function render(){
   const rows=state.filtered;
   const called=rows.length;
@@ -504,11 +866,18 @@ function render(){
   // This deliberately does not use post-call events, OFD timestamps, or delivery timestamps.
   const delivered=rows.filter(r=>r.outcomeKey==="delivered").length;
   const rto=rows.filter(r=>r.outcomeKey==="rto").length;
-  const otherStatus=rows.filter(r=>r.outcomeKey==="other").length;
   const unknownStatus=rows.filter(r=>r.outcomeKey==="unknown").length;
   const deliveredPct=pct(delivered,called);
   const rtoPct=pct(rto,called);
-  const otherPct=pct(otherStatus,called);
+
+  // Build shipment-status cards from the actual latest ClickPost statuses.
+  const statusCounts={};
+  rows.forEach(r=>{
+    if(r.outcomeKey==="delivered")return;
+    if(r.outcomeKey==="rto")return;
+    if(r.outcomeKey==="unknown")return;
+    statusCounts[r.outcome]=(statusCounts[r.outcome]||0)+1;
+  });
 
   const kpis=[
     ["Unique AWBs called",called,"AWBs with ≥1 outbound NDR call","all",
@@ -524,14 +893,27 @@ function render(){
     ["No-answer calls",noanswer,pct(noanswer,totalCalls),"no-answer",
       "No-answer outbound calls ÷ total outbound calls × 100."],
     ["Delivered",delivered,deliveredPct,"delivered",
-      "Called AWBs whose LATEST ClickPost status is Delivered ÷ all called AWBs × 100."],
+      "Called AWBs whose latest ClickPost status is Delivered ÷ all called AWBs × 100."],
     ["RTO",rto,rtoPct,"rto",
-      "Called AWBs whose LATEST ClickPost status contains RTO ÷ all called AWBs × 100."],
-    ["Other latest status",otherStatus,otherPct,"other",
-      "Called AWBs with a latest ClickPost status that is neither Delivered nor RTO."]
+      "Called AWBs whose latest ClickPost status contains RTO ÷ all called AWBs × 100."]
   ];
-  if(unknownStatus>0) kpis.push(["Status unavailable",unknownStatus,pct(unknownStatus,called),"unknown",
+
+  Object.entries(statusCounts)
+    .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
+    .forEach(([status,count])=>{
+      kpis.push([
+        status,
+        count,
+        pct(count,called),
+        `status:${status}`,
+        `Called AWBs whose latest ClickPost status is ${status}.`
+      ]);
+    });
+
+  if(unknownStatus>0){
+    kpis.push(["Status unavailable",unknownStatus,pct(unknownStatus,called),"unknown",
       "Called AWBs where ClickPost did not provide a usable latest status."]);
+  }
 
   document.getElementById("kpis").innerHTML=kpis.map(([label,value,sub,key,tip])=>`
     <div class="panel kpi" data-kpi="${key}">
@@ -542,11 +924,17 @@ function render(){
 
   document.querySelectorAll("[data-kpi]").forEach(el=>el.onclick=()=>{
     const k=el.dataset.kpi;
-    if(k==="completed"||k==="failed"||k==="no-answer")filterCallStatus(k);
-    else if(["delivered","rto","other","unknown"].includes(k))filterOutcome(
-      k==="delivered"?"Delivered":k==="rto"?"RTO":k==="other"?"Other latest status":"Status unavailable"
-    );
-    else resetFilters();
+    if(k==="completed"||k==="failed"||k==="no-answer") {
+      filterCallStatus(k);
+    } else if(k==="delivered"||k==="rto") {
+      filterOutcome(k==="delivered"?"Delivered":"RTO");
+    } else if(k==="unknown") {
+      filterOutcome("Status unavailable");
+    } else if(k.startsWith("status:")) {
+      filterOutcome(k.slice(7));
+    } else {
+      resetFilters();
+    }
   });
 
   document.getElementById("callMini").innerHTML=[
@@ -574,11 +962,21 @@ function render(){
     statusOutcomeCount[r.lastStatus]=(statusOutcomeCount[r.lastStatus]||0)+1;
   });
 
+  // Actual shipment status breakdown. Delivered/RTO keep their grouped
+  // categories; every other latest ClickPost status keeps its real label.
   const outcomeKeys=[
     ["delivered","Delivered",colors.green],
-    ["rto","RTO",colors.red],
-    ["other","Other latest status",colors.blue]
+    ["rto","RTO",colors.red]
   ];
+
+  const dynamicStatuses=Object.entries(statusCounts)
+    .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
+
+  dynamicStatuses.forEach(([status,count],i)=>{
+    const palette=[colors.blue,colors.amber,colors.purple,colors.cyan,colors.slate,colors.gray];
+    outcomeKeys.push([`status:${status}`,status,palette[i%palette.length]]);
+  });
+
   if(unknownStatus>0) outcomeKeys.push(["unknown","Status unavailable",colors.gray]);
 
   makeChart("outcomeChart","doughnut",{
@@ -594,7 +992,7 @@ function render(){
     onClick:(e,els)=>{
       if(!els.length)return;
       const key=outcomeKeys[els[0].index][0];
-      filterOutcome(key==="delivered"?"Delivered":key==="rto"?"RTO":key==="other"?"Other latest status":"Status unavailable");
+      filterOutcome(key==="delivered"?"Delivered":key==="rto"?"RTO":key==="other"?"Actual Latest Shipment Status":"Status unavailable");
     }
   });
 
@@ -629,18 +1027,24 @@ function render(){
   });
 
   const statuses=[["completed","Completed"],["no-answer","No answer"],["failed","Failed"],["missed-call","Missed"]];
-  const statusLatest={
-    delivered: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="delivered").length),
-    rto: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="rto").length),
-    other: statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length)
-  };
+  const statusOutcomeRows=Object.entries(statusCounts);
+
+  const statusDatasets=[
+    {label:"Delivered",key:"delivered",backgroundColor:colors.green},
+    {label:"RTO",key:"rto",backgroundColor:colors.red},
+    ...statusOutcomeRows.map(([label],i)=>({
+      label,
+      key:`status:${label}`,
+      backgroundColor:[colors.blue,colors.amber,colors.purple,colors.cyan,colors.slate,colors.gray][i%6]
+    }))
+  ];
 
   makeChart("statusOutcomeChart","bar",{
     labels:statuses.map(x=>x[1]),
     datasets:[
       {label:"Delivered",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="delivered").length),backgroundColor:colors.green},
       {label:"RTO",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="rto").length),backgroundColor:colors.red},
-      {label:"Other latest status",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length),backgroundColor:colors.blue}
+      {label:"Actual Latest Shipment Status",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length),backgroundColor:colors.blue}
     ]
   },{
     responsive:true,maintainAspectRatio:false,
@@ -700,6 +1104,15 @@ function render(){
     </tr>`).join("");
 
   document.getElementById("empty").style.display=displayRows.length?"none":"block";
+
+  document.getElementById("awbAuditBody").innerHTML=rows.slice(0,500).map(r=>`
+    <tr>
+      <td><b>${esc(r.awb)}</b></td>
+      <td>${esc(awbMatchKey(r.awb))}</td>
+      <td>${esc(r.clickPostAWBRaw||"—")}</td>
+      <td>${r.shipmentFound ? '<span class="badge green">Exact match</span>' : '<span class="badge red">No ClickPost match</span>'}</td>
+    </tr>
+  `).join("");
 
   const avgCalls=called?totalCalls/called:0;
   document.getElementById("tableMeta").textContent=
