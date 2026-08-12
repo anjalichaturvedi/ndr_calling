@@ -87,7 +87,7 @@ details summary{cursor:pointer;font-weight:700}
   <summary>Filters</summary>
   <div class="filter-grid">
     <div><label>Shipment outcome</label><select id="fOutcome"><option value="">All</option></select></div>
-    <div><label>Last outbound call status</label><select id="fCallStatus"><option value="">All</option></select></div>
+    <div><label>Call status</label><select id="fCallStatus"><option value="">All</option></select></div>
     <div><label>Payment mode</label><select id="fPayment"><option value="">All</option></select></div>
     <div><label>Calls per AWB</label><select id="fCalls"><option value="">All</option><option value="1">1 call</option><option value="2">2 calls</option><option value="3">3 calls</option><option value="4+">4+ calls</option></select></div>
     <div><label>First call from</label><input id="fFrom" type="date"></div>
@@ -101,7 +101,7 @@ details summary{cursor:pointer;font-weight:700}
 
 <div class="grid">
   <section class="panel card span-4">
-    <h2>Calling performance <span class="info" data-tooltip="Outbound call records only. Completed/failed/no-answer are call statuses. Calls per AWB = outbound calls ÷ unique called AWBs." tabindex="0" aria-label="More information">i</span></h2>
+    <h2>Calling performance <span class="info" data-tooltip="Outbound call records only. Answered/failed/unanswered are labels for the Exotel overall Status field. Calls per AWB = outbound calls ÷ unique called AWBs." tabindex="0" aria-label="More information">i</span></h2>
     <div class="mini-grid" id="callMini"></div>
     <div class="chart-wrap"><canvas id="callHealthChart"></canvas></div>
   </section>
@@ -125,7 +125,7 @@ details summary{cursor:pointer;font-weight:700}
   </section>
 
   <section class="panel card span-7">
-    <h2>Call status → shipment outcome <span class="info" data-tooltip="Called AWBs are grouped by last outbound call status and latest ClickPost status." tabindex="0" aria-label="More information">i</span></h2>
+    <h2>Last call status → shipment outcome <span class="info" data-tooltip="Called AWBs are grouped by their outbound call statuses and latest ClickPost status." tabindex="0" aria-label="More information">i</span></h2>
     <div class="desc">AWB-level latest ClickPost status grouped by the last outbound call status.</div>
     <div class="chart-wrap"><canvas id="statusOutcomeChart"></canvas></div>
   </section>
@@ -167,7 +167,7 @@ details summary{cursor:pointer;font-weight:700}
       <table>
         <thead><tr>
           <th>AWB</th><th>First call</th><th>Last call</th><th>Calls</th><th>Completed</th><th>Failed</th><th>No answer</th>
-          <th>Missed</th><th>Last call status</th><th>Payment</th><th>Outcome</th><th>Outcome date</th>
+          <th>Missed</th><th>Call statuses</th><th>Payment</th><th>Outcome</th><th>Outcome date</th>
           <th>Current shipment status</th><th>Call cost</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
@@ -492,6 +492,15 @@ function assertV3AwbLogic(){
   return cases.every(([a,b,expected]) => (awbMatchKey(a)===awbMatchKey(b))===expected);
 }
 
+function callStatusLabel(status){
+  const s=lower(status);
+  if(s==="completed") return "Answered";
+  if(s==="no-answer" || s==="no answer") return "Unanswered";
+  if(s==="failed") return "Failed";
+  if(s==="missed-call" || s==="missed call") return "Missed";
+  return normalize(status) || "Unknown";
+}
+
 function lower(v){return normalize(v).toLowerCase()}
 function parseDate(v){
   if(!v)return null;
@@ -679,6 +688,8 @@ async function loadData(){
         callCount:a.calls.length,
         ...counts,
         lastStatus:last.status,
+        callStatuses:[...new Set(a.calls.map(c=>c.status).filter(Boolean))],
+        callRecords:a.calls.map(c=>({...c})),
         payment:paymentCol ? normalize(shipmentRow[paymentCol]) : "Unknown",
         outcomeKey:outcome.key,
         outcome:outcome.label,
@@ -728,7 +739,16 @@ function populateSelect(id,values){
 }
 function populateFilters(){
   populateSelect("fOutcome",state.all.map(r=>r.outcome));
-  populateSelect("fCallStatus",state.all.map(r=>r.lastStatus));
+
+  const el=document.getElementById("fCallStatus");
+  const oldValue=el.value;
+  const values=[...new Set(
+    state.all.flatMap(r=>Array.isArray(r.callStatuses)?r.callStatuses:[r.lastStatus]).filter(Boolean)
+  )].sort();
+  el.innerHTML='<option value="">All</option>'+
+    values.map(v=>`<option value="${esc(v)}">${esc(callStatusLabel(v))}</option>`).join("");
+  if(values.includes(oldValue)) el.value=oldValue;
+
   populateSelect("fPayment",state.all.map(r=>r.payment));
 }
 function applyFilters(rerender=true){
@@ -744,7 +764,12 @@ function applyFilters(rerender=true){
   state.tableSearch=lower(document.getElementById("tableSearch").value);
   state.filtered=state.all.filter(r=>{
     if(state.filters.outcome&&r.outcome!==state.filters.outcome)return false;
-    if(state.filters.callStatus&&r.lastStatus!==state.filters.callStatus)return false;
+    if(
+      state.filters.callStatus &&
+      !(Array.isArray(r.callStatuses)
+        ? r.callStatuses.includes(state.filters.callStatus)
+        : r.lastStatus===state.filters.callStatus)
+    ) return false;
     if(state.filters.payment&&r.payment!==state.filters.payment)return false;
     if(state.filters.calls){
       if(state.filters.calls==="4+" ? r.callCount<4 : r.callCount!==Number(state.filters.calls))return false;
@@ -874,15 +899,41 @@ function buildAWBRCA(){
   `).join("");
 }
 
+function callsForMetrics(rows){
+  const selectedStatus=state.filters.callStatus;
+  const calls=[];
+
+  rows.forEach(r=>{
+    const records=Array.isArray(r.callRecords) ? r.callRecords : [];
+
+    if(selectedStatus){
+      // When Call status is selected, only the individual outbound calls
+      // with that exact raw Exotel Status are included in KPI metrics.
+      records.forEach(c=>{
+        if(c.status===selectedStatus) calls.push(c);
+      });
+    }else{
+      records.forEach(c=>calls.push(c));
+    }
+  });
+
+  return calls;
+}
+
+
 function render(){
   const rows=state.filtered;
   const called=rows.length;
-  const totalCalls=rows.reduce((s,r)=>s+r.callCount,0);
-  const completed=rows.reduce((s,r)=>s+r.completed,0);
-  const failed=rows.reduce((s,r)=>s+r.failed,0);
-  const noanswer=rows.reduce((s,r)=>s+r.noanswer,0);
-  const missed=rows.reduce((s,r)=>s+r.missed,0);
-  const cost=rows.reduce((s,r)=>s+r.totalCost,0);
+
+  // KPI/calling-performance metrics are scoped to the selected Call status.
+  // Without a Call status filter, all outbound calls are included.
+  const metricCalls=callsForMetrics(rows);
+  const totalCalls=metricCalls.length;
+  const completed=metricCalls.filter(c=>c.status==="completed").length;
+  const failed=metricCalls.filter(c=>c.status==="failed").length;
+  const noanswer=metricCalls.filter(c=>c.status==="no-answer").length;
+  const missed=metricCalls.filter(c=>c.status==="missed-call").length;
+  const cost=metricCalls.reduce((s,c)=>s+(Number(c.price)||0),0);
 
   // Delivery conversion:
   // denominator = every AWB that had at least one outbound NDR call.
@@ -907,15 +958,19 @@ function render(){
     ["Unique AWBs called",called,"AWBs with ≥1 outbound NDR call","all",
       "Count of distinct AWBs that received at least one outbound call."],
     ["Outbound calls",totalCalls,called?`${(totalCalls/called).toFixed(2)} calls / AWB`:"0.00 calls / AWB","all",
-      "Total outbound call records. Calls per AWB = outbound calls ÷ called AWBs."],
-    ["AWBs per call",totalCalls?(called/totalCalls).toFixed(2):"0.00","Unique called AWBs ÷ outbound calls","all",
-      "Inverse of calls per AWB: unique called AWBs ÷ outbound call records."],
-    ["Completed calls",completed,pct(completed,totalCalls),"completed",
-      "Completed outbound calls ÷ total outbound calls × 100."],
+      state.filters.callStatus
+        ? `Outbound calls with Call status = ${callStatusLabel(state.filters.callStatus)}.`
+        : "Total outbound call records. Calls per AWB = outbound calls ÷ called AWBs."],
+    ["AWBs per call",totalCalls?(called/totalCalls).toFixed(2):"0.00","Unique called AWBs ÷ scoped calls","all",
+      state.filters.callStatus
+        ? "Unique called AWBs ÷ calls matching the selected Call status."
+        : "Inverse of calls per AWB: unique called AWBs ÷ outbound call records."],
+    ["Answered calls",completed,pct(completed,totalCalls),"completed",
+      "Answered calls ÷ scoped outbound calls × 100."],
     ["Failed calls",failed,pct(failed,totalCalls),"failed",
-      "Failed outbound calls ÷ total outbound calls × 100."],
-    ["No-answer calls",noanswer,pct(noanswer,totalCalls),"no-answer",
-      "No-answer outbound calls ÷ total outbound calls × 100."],
+      "Failed outbound calls ÷ scoped outbound calls × 100."],
+    ["Unanswered calls",noanswer,pct(noanswer,totalCalls),"no-answer",
+      "Unanswered calls ÷ scoped outbound calls × 100."],
     ["Delivered",delivered,deliveredPct,"delivered",
       "Called AWBs whose latest ClickPost status is Delivered ÷ all called AWBs × 100."],
     ["RTO",rto,rtoPct,"rto",
@@ -962,9 +1017,9 @@ function render(){
   });
 
   document.getElementById("callMini").innerHTML=[
-    ["Completed rate",pct(completed,totalCalls),"Completed outbound calls ÷ all outbound calls"],
-    ["Failed rate",pct(failed,totalCalls),"Failed outbound calls ÷ all outbound calls"],
-    ["No-answer rate",pct(noanswer,totalCalls),"No-answer outbound calls ÷ all outbound calls"],
+    ["Answered rate",pct(completed,totalCalls),"Answered outbound calls ÷ scoped outbound calls"],
+    ["Failed rate",pct(failed,totalCalls),"Failed outbound calls ÷ scoped outbound calls"],
+    ["Unanswered rate",pct(noanswer,totalCalls),"Unanswered outbound calls ÷ scoped outbound calls"],
     ["ClickPost mapped",`${rows.filter(r=>r.shipmentFound).length.toLocaleString("en-IN")} (${pct(rows.filter(r=>r.shipmentFound).length,called)})`,
       "Called AWBs found in the ClickPost sheet"]
   ].map(x=>`<div class="mini"><div class="v">${x[1]}</div><div class="l">${x[0]} <span class="info" data-tooltip="${esc(x[2])}" tabindex="0" aria-label="More information">i</span></div></div>`).join("");
@@ -972,7 +1027,7 @@ function render(){
   destroyCharts();
 
   makeChart("callHealthChart","bar",{
-    labels:["Completed","Failed","No answer"],
+    labels:["Answered","Failed","Unanswered"],
     datasets:[{label:"Outbound calls",data:[completed,failed,noanswer],backgroundColor:[colors.green,colors.red,colors.amber]}]
   },{
     responsive:true,maintainAspectRatio:false,
@@ -1016,7 +1071,7 @@ function render(){
     onClick:(e,els)=>{
       if(!els.length)return;
       const key=outcomeKeys[els[0].index][0];
-      filterOutcome(key==="delivered"?"Delivered":key==="rto"?"RTO":key==="other"?"Actual Latest Shipment Status":"Status unavailable");
+      filterOutcome(key==="delivered"?"Delivered":key==="rto"?"RTO":key==="unknown"?"Status unavailable":outcomeKeys[els[0].index][1]);
     }
   });
 
@@ -1050,7 +1105,7 @@ function render(){
     plugins:{legend:{position:"bottom"}}
   });
 
-  const statuses=[["completed","Completed"],["no-answer","No answer"],["failed","Failed"],["missed-call","Missed"]];
+  const statuses=[["completed","Answered"],["no-answer","Unanswered"],["failed","Failed"],["missed-call","Missed"]];
   const statusOutcomeRows=Object.entries(statusCounts);
 
   const statusDatasets=[
@@ -1068,7 +1123,7 @@ function render(){
     datasets:[
       {label:"Delivered",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="delivered").length),backgroundColor:colors.green},
       {label:"RTO",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="rto").length),backgroundColor:colors.red},
-      {label:"Actual Latest Shipment Status",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length),backgroundColor:colors.blue}
+      {label:"Latest Shipment Status",data:statuses.map(([k])=>rows.filter(r=>r.lastStatus===k&&r.outcomeKey==="other").length),backgroundColor:colors.blue}
     ]
   },{
     responsive:true,maintainAspectRatio:false,
@@ -1119,7 +1174,7 @@ function render(){
       <td>${r.failed}</td>
       <td>${r.noanswer}</td>
       <td>${r.missed}</td>
-      <td>${badge(r.lastStatus)}</td>
+      <td>${(r.callStatuses||[r.lastStatus]).map(s=>badge(callStatusLabel(s))).join(" ")}</td>
       <td>${esc(r.payment||"—")}</td>
       <td>${outcomeBadge(r.outcomeKey,r.outcome)}</td>
       <td>${fmtDate(r.outcomeDate)}</td>
