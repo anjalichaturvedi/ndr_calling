@@ -176,7 +176,7 @@ function render(){
     ["Post-call delivery",post,pct(post,n)],
     ["COD",cod,pct(cod,n)],
     ["PREPAID",prepaid,pct(prepaid,n)],
-    ["Avg NDR age",avgAge.toFixed(1)+" days","Average age from last failed delivery to first call"]
+    ["Avg NDR age",avgAge.toFixed(1)+" days","Average age from first failed delivery to first call"]
   ].map(x=>`<div class="panel kpi"><div class="l">${x[0]}</div><div class="v">${x[1]}</div><div class="s">${x[2]}</div></div>`).join("");
 
   // Show every actual ClickPost outcome/status.
