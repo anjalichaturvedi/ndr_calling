@@ -170,13 +170,13 @@ function render(){
 
   document.getElementById("kpis").innerHTML=[
     ["Called AWBs",n,"Unique shipments called"],
-    ["Outbound calls",calls,n?(calls/n).toFixed(2)+" calls/AWB":"0.00"],
+    ["Outbound calls",calls,n?pct(calls,n)+" calls/AWB":"0.0"],
     ["Delivered",delivered,pct(delivered,n)],
     ["RTO",rto,pct(rto,n)],
     ["Post-call delivery",post,pct(post,n)],
     ["COD",cod,pct(cod,n)],
     ["PREPAID",prepaid,pct(prepaid,n)],
-    ["Avg NDR age",avgAge.toFixed(1)+" days",age.length+" shipments with age"]
+    ["Avg NDR age",avgAge.toFixed(1)+" days","Average age from last failed delivery to first call"]
   ].map(x=>`<div class="panel kpi"><div class="l">${x[0]}</div><div class="v">${x[1]}</div><div class="s">${x[2]}</div></div>`).join("");
 
   // Show every actual ClickPost outcome/status.
